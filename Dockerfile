@@ -66,8 +66,7 @@ RUN npm install
 COPY --chown=fgc:fgc . .
 
 # Shell scripts need Linux line endings. On Windows, git might be configured to check out dos/CRLF line endings, so we convert them for those people in case they want to build the image. They could also use --config core.autocrlf=input
-RUN dos2unix ./*.sh && chmod +x ./*.sh
-COPY docker-entrypoint.sh /usr/local/bin/
+RUN dos2unix ./*.sh && chmod +x ./*.sh && cp docker-entrypoint.sh /usr/local/bin/
 
 ARG COMMIT=""
 ARG BRANCH=""
