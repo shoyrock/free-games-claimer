@@ -28,7 +28,8 @@ EOT
 # Remove X server display lock, fix for `docker compose up` which reuses container which made it fail after initial run, https://github.com/vogler/free-games-claimer/issues/31
 # echo $DISPLAY
 # ls -l /tmp/.X11-unix/
-rm -f /tmp/.X1-lock
+# shellcheck disable=SC2086
+rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 ~/.vnc/*:1.pid
 
 # 6000+SERVERNUM is the TCP port Xvfb is listening on:
 # SERVERNUM=$(echo "$DISPLAY" | sed 's/:\([0-9][0-9]*\).*/\1/')
@@ -38,7 +39,7 @@ rm -f /tmp/.X1-lock
 # −screen NUM WxHxD creates the screen and sets its width, height, and depth
 
 export DISPLAY=:1 # need to export this, otherwise playwright complains with 'Looks like you launched a headed browser without having a XServer running.'
-Xvfb $DISPLAY -ac -screen 0 "${WIDTH}x${HEIGHT}x${DEPTH}" &
+Xvfb $DISPLAY -ac -nolisten unix -screen 0 "${WIDTH}x${HEIGHT}x${DEPTH}" &
 echo "Xvfb display server created screen with resolution ${WIDTH}x${HEIGHT}"
 if [ -z "$VNC_PASSWORD" ]; then
   pw="-nopw"

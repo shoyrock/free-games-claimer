@@ -51,8 +51,10 @@ RUN apt-get update \
 RUN ln -s /usr/share/novnc/vnc_auto.html /usr/share/novnc/index.html
 RUN pip install apprise
 
+RUN useradd -ms /bin/bash fgc
+
 WORKDIR /fgc
-COPY package*.json ./
+COPY --chown=fgc:fgc package*.json ./
 
 # Playwright installs patched firefox to ~/.cache/ms-playwright/firefox-*
 # Requires some system deps to run (see inlined install-deps above).
@@ -61,7 +63,7 @@ RUN npm install
 # From 1.38 Playwright will no longer install browser automatically for playwright, but apparently still for playwright-firefox: https://github.com/microsoft/playwright/releases/tag/v1.38.0
 # RUN npx playwright install firefox
 
-COPY . .
+COPY --chown=fgc:fgc . .
 
 # Shell scripts need Linux line endings. On Windows, git might be configured to check out dos/CRLF line endings, so we convert them for those people in case they want to build the image. They could also use --config core.autocrlf=input
 RUN dos2unix ./*.sh && chmod +x ./*.sh
@@ -97,6 +99,8 @@ ENV DEPTH 24
 
 # Show browser instead of running headless
 ENV SHOW 1
+
+USER fgc
 
 # Script to setup display server & VNC is always executed.
 ENTRYPOINT ["docker-entrypoint.sh"]
