@@ -107,17 +107,24 @@ try {
         console.error('Incorrect response for captcha!');
       }).catch(_ => { });
       await page.fill('#email', email);
-      // await page.click('button[type="submit"]'); login was split in two steps for some time, now email and password are on the same form again
+      // Click Continue/Submit after email (login may be split into two steps)
+      await page.click('button[type="submit"]').catch(_ => { });
+      await page.waitForTimeout(1000);
       const password = email && (cfg.eg_password || await prompt({ type: 'password', message: 'Enter password' }));
       if (!password) await notifyBrowserLogin();
       else {
-        await page.fill('#password', password);
+        await page.fill('#password', password).catch(_ => { });
         await page.click('button[type="submit"]');
       }
       const error = page.locator('#form-error-message');
       error.waitFor().then(async () => {
         console.error('Login error:', await error.innerText());
         console.log('Please login in the browser!');
+      }).catch(_ => { });
+      // Handle "Is this the right account?" confirmation prompt (PR #583)
+      page.waitForSelector('button#yes, button[aria-label="Yes, continue"]', { timeout: 30000 }).then(async (btn) => {
+        console.log('Got "Is this the right account?" prompt, clicking Yes...');
+        await btn.click({ delay: 111 });
       }).catch(_ => { });
       // handle MFA, but don't await it
       page.waitForURL('**/id/login/mfa**').then(async () => {
