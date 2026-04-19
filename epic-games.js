@@ -107,14 +107,18 @@ try {
         console.error('Incorrect response for captcha!');
       }).catch(_ => { });
       await page.fill('#email', email);
-      // Click Continue/Submit after email (login may be split into two steps)
-      await page.click('button[type="submit"]').catch(_ => { });
-      await page.waitForTimeout(1000);
+      // Two-step login: click Continue after email, wait for password field
+      const submitBtn = page.locator('button[type="submit"]');
+      await submitBtn.waitFor({ state: 'visible' });
+      await submitBtn.click({ delay: 111 });
       const password = email && (cfg.eg_password || await prompt({ type: 'password', message: 'Enter password' }));
       if (!password) await notifyBrowserLogin();
       else {
-        await page.fill('#password', password).catch(_ => { });
-        await page.click('button[type="submit"]');
+        await page.waitForSelector('#password', { state: 'visible' }).catch(_ => { });
+        await page.fill('#password', password);
+        const signInBtn = page.locator('button[type="submit"]');
+        await signInBtn.waitFor({ state: 'visible' });
+        await signInBtn.click({ delay: 111 });
       }
       const error = page.locator('#form-error-message');
       error.waitFor().then(async () => {
@@ -132,7 +136,10 @@ try {
         // TODO locator for text (email or app?)
         const otp = cfg.eg_otpkey && authenticator.generate(cfg.eg_otpkey) || await prompt({ type: 'text', message: 'Enter two-factor sign in code', validate: n => n.toString().length == 6 || 'The code must be 6 digits!' }); // can't use type: 'number' since it strips away leading zeros and codes sometimes have them
         await page.locator('input[name="code-input-0"]').pressSequentially(otp.toString());
-        await page.click('button[type="submit"]');
+        await page.waitForTimeout(500);
+        const otpBtn = page.locator('button[type="submit"]');
+        await otpBtn.waitFor({ state: 'visible' });
+        await otpBtn.click({ delay: 111 });
       }).catch(_ => { });
     }
     await page.waitForURL(URL_CLAIM);
