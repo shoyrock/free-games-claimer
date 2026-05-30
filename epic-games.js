@@ -145,21 +145,51 @@ try {
   if (cfg.time) console.time('claim all games');
 
   // Detect free games
+  let urls = [];
+  
+  // Try old HTML selector first (for backwards compatibility)
   const game_loc = page.locator('a:has(span:text-is("Free Now"))');
-  await game_loc.last().waitFor().catch(_ => {
-    // rarely there are no free games available -> catch Timeout
-    // TODO would be better to wait for alternative like 'coming soon' instead of waiting for timeout
-    // see https://github.com/vogler/free-games-claimer/issues/210#issuecomment-1727420943
-    console.error('Seems like currently there are no free games available in your region...');
-    // urls below should then be an empty list
-  });
-  // clicking on `game_sel` sometimes led to a 404, see https://github.com/vogler/free-games-claimer/issues/25
-  // debug showed that in those cases the href was still correct, so we `goto` the urls instead of clicking.
-  // Alternative: parse the json loaded to build the page https://store-site-backend-static-ipv4.ak.epicgames.com/freeGamesPromotions
-  // i.e. filter data.Catalog.searchStore.elements for .promotions.promotionalOffers being set and build URL with .catalogNs.mappings[0].pageSlug or .urlSlug if not set to some wrong id like it was the case for spirit-of-the-north-f58a66 - this is also what's done here: https://github.com/claabs/epicgames-freegames-node/blob/938a9653ffd08b8284ea32cf01ac8727d25c5d4c/src/puppet/free-games.ts#L138-L213
-  const urlSlugs = await Promise.all((await game_loc.elementHandles()).map(a => a.getAttribute('href')));
-  const urls = urlSlugs.map(s => 'https://store.epicgames.com' + s);
-  console.log('Free games:', urls);
+  try {
+    await game_loc.last().waitFor({ timeout: 10000 });
+    const urlSlugs = await Promise.all((await game_loc.elementHandles()).map(a => a.getAttribute('href')));
+    urls = urlSlugs.filter(Boolean).map(s => 'https://store.epicgames.com' + s);
+    console.log('Found free games via HTML selector:', urls);
+  } catch (e) {
+    console.log('HTML selector did not find games, trying Epic API...');
+  }
+  
+  // Fallback: use Epic's API to detect free games (more reliable, works with UI changes)
+  if (urls.length === 0) {
+    try {
+      const apiUrl = 'https://store-site-backend-static-ipv4.ak.epicgames.com/freeGamesPromotions?locale=en-US&country=US&allowCountries=US';
+      const response = await page.evaluate(async (url) => {
+        const res = await fetch(url);
+        return res.json();
+      }, apiUrl);
+      
+      const elements = response.data?.Catalog?.searchStore?.elements || [];
+      console.log(`API returned ${elements.length} games, filtering for current promotions...`);
+      
+      for (const game of elements) {
+        const promotions = game.promotions?.promotionalOffers;
+        if (promotions && promotions.length > 0 && promotions[0].promotionalOffers?.length > 0) {
+          // Get the URL slug - prefer pageSlug from mappings, fallback to urlSlug
+          const slug = game.catalogNs?.mappings?.[0]?.pageSlug || game.urlSlug;
+          if (slug) {
+            const url = `https://store.epicgames.com/en-US/p/${slug}`;
+            if (!urls.includes(url)) urls.push(url);
+          }
+        }
+      }
+      console.log('Found free games via API:', urls);
+    } catch (e) {
+      console.error('Failed to fetch free games from API:', e.message);
+    }
+  }
+  
+  if (urls.length === 0) {
+    console.error('No free games found. There may be no free games available in your region, or Epic changed their UI again.');
+  }
 
   for (const url of urls) {
     if (cfg.time) console.time('claim game');
