@@ -17,8 +17,8 @@ export const cfg = {
   },
   width: process.env.WIDTH ? Number(process.env.WIDTH) : 1920, // width of the opened browser
   height: process.env.HEIGHT ? Number(process.env.HEIGHT) : 1080, // height of the opened browser
-  timeout: ((process.env.TIMEOUT ? Number(process.env.TIMEOUT) : 60)) * 1000, // default timeout for playwright is 30s
-  login_timeout: ((process.env.LOGIN_TIMEOUT ? Number(process.env.LOGIN_TIMEOUT) : 180)) * 1000, // higher timeout for login, will wait twice: prompt + wait for manual login
+  timeout: (process.env.TIMEOUT ? Number(process.env.TIMEOUT) : 60) * 1000, // default timeout for playwright is 30s
+  login_timeout: (process.env.LOGIN_TIMEOUT ? Number(process.env.LOGIN_TIMEOUT) : 180) * 1000, // higher timeout for login, will wait twice: prompt + wait for manual login
   novnc_port: process.env.NOVNC_PORT, // running in docker if set
   notify: process.env.NOTIFY, // apprise notification services
   notify_title: process.env.NOTIFY_TITLE, // apprise notification title
@@ -33,6 +33,7 @@ export const cfg = {
   eg_password: process.env.EG_PASSWORD || process.env.PASSWORD,
   eg_otpkey: process.env.EG_OTPKEY,
   eg_parentalpin: process.env.EG_PARENTALPIN,
+  eg_mobile: process.env.EG_MOBILE == '1', // also claim free mobile (Android/iOS) games, https://github.com/vogler/free-games-claimer/issues/474
   // auth prime-gaming
   pg_email: process.env.PG_EMAIL || process.env.EMAIL,
   pg_password: process.env.PG_PASSWORD || process.env.PASSWORD,
@@ -55,6 +56,6 @@ export const cfg = {
   steam_password: process.env.STEAM_PASSWORD,
   steam_otpkey: process.env.STEAM_OTPKEY, // Steam Guard app OTP key (base32)
   // notifications: Telegram (alternative/addition to apprise)
-  tg_token: process.env.TG_TOKEN,       // Telegram bot token (from @BotFather)
-  tg_chat_id: process.env.TG_CHAT_ID,   // Telegram chat/channel ID
+  tg_token: process.env.TG_TOKEN, // Telegram bot token (from @BotFather)
+  tg_chat_id: process.env.TG_CHAT_ID, // Telegram chat/channel ID
 };

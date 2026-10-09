@@ -47,6 +47,8 @@ RUN apt-get update \
       libnspr4 \
       libcups2 \
       libxkbcommon0 \
+      libatspi2.0-0 \
+      libxfixes3 \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf \
@@ -97,18 +99,18 @@ LABEL org.opencontainers.image.title="free-games-claimer" \
       org.opencontainers.image.version="latest"
 
 # Configure VNC via environment variables:
-ENV VNC_PORT 5900
-ENV NOVNC_PORT 6080
+ENV VNC_PORT=5900
+ENV NOVNC_PORT=6080
 EXPOSE 5900
 EXPOSE 6080
 
 # Configure Xvfb via environment variables:
-ENV WIDTH 1920
-ENV HEIGHT 1080
-ENV DEPTH 24
+ENV WIDTH=1920
+ENV HEIGHT=1080
+ENV DEPTH=24
 
 # Show browser instead of running headless
-ENV SHOW 1
+ENV SHOW=1
 
 # HEALTHCHECK: passes if lastrun.json was updated within the last 25 hours (1500 min).
 # Fails if the scheduler is stuck or hasn't run since container start.

@@ -84,6 +84,7 @@ Available options/variables and their default values:
 | EG_PASSWORD   	|         	| Epic Games password for login. Overrides PASSWORD.                     	|
 | EG_OTPKEY     	|         	| Epic Games MFA OTP key.                                                	|
 | EG_PARENTALPIN 	|         	| Epic Games Parental Controls PIN.                                      	|
+| EG_MOBILE     	| 0       	| Epic Games: also claim free mobile (Android/iOS) games if 1.           	|
 | PG_EMAIL      	|         	| Prime Gaming email for login. Overrides EMAIL.                         	|
 | PG_PASSWORD   	|         	| Prime Gaming password for login. Overrides PASSWORD.                   	|
 | PG_OTPKEY     	|         	| Prime Gaming MFA OTP key.                                              	|
@@ -126,6 +127,13 @@ Beware that storing passwords and OTP keys as clear text may be a security risk.
 
 ### Epic Games Store
 Run `node epic-games` (locally or in Docker).
+
+The free games are read from Epic's `freeGamesPromotions` JSON (the same data the store page is built from), so the claimer keeps working when Epic redesigns the free-games page. The HTML is only used as a fallback.
+Set `EG_MOBILE=1` to also claim the free mobile (Android/iOS) games.
+
+Troubleshooting:
+- `Got a Cloudflare challenge`: Epic now fronts the store with Cloudflare, which blocks datacenter/VPN IPs and headless browsers. Run with `SHOW=1` (default in Docker) on a residential IP and solve the challenge via noVNC if it keeps showing.
+- `Not signed in anymore` on every run: the login session in `data/browser` expired. Login once via noVNC or set `EG_EMAIL`, `EG_PASSWORD` and `EG_OTPKEY`.
 
 ### Amazon Prime Gaming
 Run `node prime-gaming` (locally or in Docker).
