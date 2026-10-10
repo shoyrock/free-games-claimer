@@ -26,9 +26,9 @@ Easy option: [install Docker](https://docs.docker.com/get-docker/) (or [podman](
 docker run --rm -it -p 6080:6080 -v fgc:/fgc/data --pull=always ghcr.io/vogler/free-games-claimer
 ```
 
-_This currently gives you a captcha challenge for epic-games. Until [issue #183](https://github.com/vogler/free-games-claimer/issues/183) is fixed, it is recommended to just run `node epic-games` without docker (see below)._
+_Run the container on a residential connection: Epic's Cloudflare protection blocks most datacenter/VPN IPs with a challenge page (see Troubleshooting below)._
 
-This will run `node epic-games; node prime-gaming; node gog` - if you only want to claim games for one of the stores, you can override the default command by appending e.g. `node epic-games` at the end of the `docker run` command, or if you want several `bash -c "node epic-games.js; node gog.js"`.
+This will run `node epic-games; node prime-gaming; node gog; node steam-games` - if you only want to claim games for one of the stores, you can override the default command by appending e.g. `node epic-games` at the end of the `docker run` command, or if you want several `bash -c "node epic-games.js; node gog.js"`.
 Data (including json files with claimed games, codes to redeem, screenshots) is stored in the Docker volume `fgc`.
 
 <details>
@@ -84,6 +84,7 @@ Available options/variables and their default values:
 | EG_PASSWORD   	|         	| Epic Games password for login. Overrides PASSWORD.                     	|
 | EG_OTPKEY     	|         	| Epic Games MFA OTP key.                                                	|
 | EG_PARENTALPIN 	|         	| Epic Games Parental Controls PIN.                                      	|
+| NOWAIT        	| 0       	| Exit right away if not logged in instead of waiting LOGIN_TIMEOUT (for unattended runs). 	|
 | EG_MOBILE     	| 0       	| Epic Games: also claim free mobile (Android/iOS) games if 1.           	|
 | EG_SELECTORS_URL	| (repo)  	| Epic Games: URL of an updated `epic-games-selectors.json`, 0 to disable. 	|
 | PG_EMAIL      	|         	| Prime Gaming email for login. Overrides EMAIL.                         	|

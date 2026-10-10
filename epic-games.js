@@ -133,6 +133,12 @@ const waitForNav = async () => {
 const login = async () => {
   while (await nav.getAttribute(S.navLoggedInAttr) != 'true') {
     console.error('Not signed in anymore. Please login in the browser or here in the terminal.');
+    if (cfg.nowait) {
+      console.error('NOWAIT=1 -> not waiting for login. Exit!');
+      await notify('epic-games: not signed in. Login via noVNC or set EG_EMAIL/EG_PASSWORD.');
+      await context.close();
+      process.exit(1);
+    }
     if (cfg.novnc_port) console.info(`Open http://localhost:${cfg.novnc_port} to login inside the docker container.`);
     if (!cfg.debug) context.setDefaultTimeout(cfg.login_timeout); // give user some extra time to log in
     console.info(`Login timeout is ${cfg.login_timeout / 1000} seconds!`);

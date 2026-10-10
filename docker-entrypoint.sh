@@ -7,37 +7,32 @@ echo "Version: https://github.com/vogler/free-games-claimer/tree/${COMMIT}"
 echo "Build: $NOW"
 
 BROWSER="${BROWSER_DIR:-/fgc/data/browser}"
-mkdir -p "$BROWSER"
+mkdir -p "$BROWSER" /fgc/data
+
 # Remove chromium profile lock.
 # When running in docker and then killing it, on the next run chromium displayed a dialog to unlock the profile which made the script time out.
 # https://bugs.chromium.org/p/chromium/issues/detail?id=367048
 rm -f "$BROWSER/SingletonLock" "$BROWSER/SingletonCookie" "$BROWSER/SingletonSocket"
 
 # Remove X server display lock, fix for `docker compose up` which reuses container which made it fail after initial run, https://github.com/vogler/free-games-claimer/issues/31
-# echo $DISPLAY
-# ls -l /tmp/.X11-unix/
 rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
 
-# 6000+SERVERNUM is the TCP port Xvfb is listening on:
-# SERVERNUM=$(echo "$DISPLAY" | sed 's/:\([0-9][0-9]*\).*/\1/')
-
-# Options passed directly to the Xvfb server:
-# -ac disables host-based access control mechanisms
-# −screen NUM WxHxD creates the screen and sets its width, height, and depth
-
 export DISPLAY=:1 # need to export this, otherwise playwright complains with 'Looks like you launched a headed browser without having a XServer running.'
-Xvfb $DISPLAY -ac -screen 0 "${WIDTH}x${HEIGHT}x${DEPTH}" &
-echo "Xvfb display server created screen with resolution ${WIDTH}x${HEIGHT}"
 if [ -z "$VNC_PASSWORD" ]; then
-  pw="-nopw"
+  pw="-SecurityTypes None"
   pwt="no password!"
 else
-  pw="-passwd $VNC_PASSWORD"
+  mkdir -p ~/.vnc/
+  echo "$VNC_PASSWORD" | /opt/TurboVNC/bin/vncpasswd -f > ~/.vnc/passwd
+  chmod 600 ~/.vnc/passwd
+  pw="-rfbauth $HOME/.vnc/passwd"
   pwt="with password"
 fi
-x11vnc -display $DISPLAY -forever -shared -rfbport $VNC_PORT -bg $pw 2>/dev/null 1>&2
-echo "VNC is running on port $VNC_PORT ($pwt)"
-websockify -D --web "/usr/share/novnc/" $NOVNC_PORT "localhost:$VNC_PORT" 2>/dev/null 1>&2 &
-echo "noVNC (VNC via browser) is running on http://localhost:$NOVNC_PORT"
+# TurboVNC server replaces Xvfb+x11vnc; ratpoison is a minimal window manager so Chromium gets a proper (maximized) window.
+# shellcheck disable=SC2086
+/opt/TurboVNC/bin/vncserver "$DISPLAY" -geometry "${WIDTH}x${HEIGHT}" -depth "${DEPTH}" -rfbport "${VNC_PORT}" $pw -vgl -log /fgc/data/TurboVNC.log -xstartup /usr/bin/ratpoison 2>/dev/null
+echo "TurboVNC is running on port $VNC_PORT ($pwt) with resolution ${WIDTH}x${HEIGHT}"
+websockify -D --web "/usr/share/novnc/" "$NOVNC_PORT" "localhost:$VNC_PORT" 2>/dev/null 1>&2 &
+echo "noVNC (VNC via browser) is running on http://localhost:$NOVNC_PORT/?autoconnect=true"
 echo
 exec tini -g -- "$@" # https://github.com/krallin/tini/issues/8 node/playwright respond to signals like ctrl-c, but unsure about zombie processes

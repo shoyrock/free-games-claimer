@@ -1,5 +1,5 @@
 import { firefox } from 'playwright-firefox'; // stealth plugin needs no outdated playwright-extra
-import { datetime, filenamify, prompt, handleSIGINT, stealth } from './src/util.js';
+import { datetime, filenamify, prompt, handleSIGINT } from './src/util.js';
 import { cfg } from './src/config.js';
 
 // using https://github.com/apify/fingerprint-suite worked, but has no launchPersistentContext...
@@ -80,6 +80,7 @@ const urls = {
   merge: 'https://m.aliexpress.com/p/merge-market/index.html',
 };
 
+// eslint-disable-next-line no-unused-vars -- WIP, see reduce() at the bottom
 const coins = async () => {
   // await auth(urls.coins);
   await Promise.any([page.locator('.checkin-button').click(), page.locator('.addcoin').waitFor()]);
@@ -88,14 +89,17 @@ const coins = async () => {
   console.log('Tomorrow:', await page.locator('.addcoin').innerText());
 };
 
+// eslint-disable-next-line no-unused-vars -- WIP, see reduce() at the bottom
 const grow = async () => {
   await page.pause();
 };
 
+// eslint-disable-next-line no-unused-vars -- WIP, see reduce() at the bottom
 const gogo = async () => {
   await page.pause();
 };
 
+// eslint-disable-next-line no-unused-vars -- WIP, see reduce() at the bottom
 const euro = async () => {
   await page.pause();
 };

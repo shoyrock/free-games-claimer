@@ -17,6 +17,7 @@ services:
     command: /fgc/run-scheduled.sh
     environment:
       - SCHEDULE_HOUR=7         # hour of day (0-23) for daily run
+      # - NOWAIT=1                # don't wait LOGIN_TIMEOUT for a manual login when a session expired, just fail and notify
       # - SCRIPTS=node epic-games; node gog   # override which scripts run
 
       # Epic Games Store

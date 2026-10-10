@@ -64,6 +64,12 @@ try {
   page.click('[aria-label="Cookies usage disclaimer banner"] button:has-text("Accept Cookies")').catch(_ => { }); // to not waste screen space when non-headless, TODO does not work reliably, need to wait for something else first?
   while (await page.locator('button:has-text("Sign in")').count() > 0) {
     console.error('Not signed in anymore.');
+    if (cfg.nowait) {
+      console.error('NOWAIT=1 -> not waiting for login. Exit!');
+      await notify('prime-gaming: not signed in. Login via noVNC or set PG_EMAIL/PG_PASSWORD.');
+      await context.close();
+      process.exit(1);
+    }
     await page.click('button:has-text("Sign in")');
     if (!cfg.debug) context.setDefaultTimeout(cfg.login_timeout); // give user some extra time to log in
     console.info(`Login timeout is ${cfg.login_timeout / 1000} seconds!`);
@@ -147,20 +153,20 @@ try {
   await scrollUntilStable(() => page.evaluate(() => document.querySelector('.tw-full-width').scrollHeight)); // height may change during loading while number of games is still the same?
   console.log('Number of already claimed games (total):', await games.locator('p:has-text("Collected")').count());
   // can't use .all() since the list of elements via locator will change after click while we iterate over it
-  const internal = await games.locator('.item-card__action:has(button[data-a-target="FGWPOffer"])').elementHandles();
+  const internal = await games.locator('.item-card__action:has(button[data-a-target="FGWPOffer"])').all();
   const external = await games.locator('.item-card__action:has(a[data-a-target="FGWPOffer"])').all();
   // bottom to top: oldest to newest games
   internal.reverse();
   external.reverse();
-  const sameOrNewPage = async url => new Promise(async (resolve, _reject) => {
+  const sameOrNewPage = async url => {
     const isNew = page.url() != url;
     let p = page;
     if (isNew) {
       p = await context.newPage();
       await p.goto(url, { waitUntil: 'domcontentloaded' });
     }
-    resolve([p, isNew]);
-  });
+    return [p, isNew];
+  };
   const skipBasedOnTime = async url => {
     // console.log('  Checking time left for game:', url);
     const [p, isNew] = await sameOrNewPage(url);
@@ -175,17 +181,17 @@ try {
   // claim games in internal store
   for (const card of internal) {
     await card.scrollIntoViewIfNeeded();
-    const title = await (await card.$('.item-card-details__body__primary')).innerText();
-    const slug = await (await card.$('a')).getAttribute('href');
+    const title = await card.locator('.item-card-details__body__primary').innerText();
+    const slug = await card.locator('a').first().getAttribute('href');
     const url = BASE_URL + slug.split('?')[0];
     console.log('Current free game:', chalk.blue(title));
     if (cfg.pg_timeLeft && await skipBasedOnTime(url)) continue;
     if (cfg.dryrun) continue;
     if (cfg.interactive && !await confirm()) continue;
-    await (await card.$('.tw-button:has-text("Claim")')).click();
+    await card.locator('.tw-button:has-text("Claim")').click();
     db.data[user][title] ||= { title, time: datetime(), url, store: 'internal' };
     notify_games.push({ title, status: 'claimed', url });
-    // const img = await (await card.$('img.tw-image')).getAttribute('src');
+    // const img = await card.locator('img.tw-image').getAttribute('src');
     // console.log('Image:', img);
     await card.screenshot({ path: screenshot('internal', `${filenamify(title)}.png`) });
   }
@@ -238,7 +244,7 @@ try {
         const code = await Promise.any([page.inputValue('input[type="text"]'), page.textContent('[data-a-target="ClaimStateClaimCodeContent"]').then(s => s.replace('Your code: ', ''))]); // input: Legacy Games; text: gog.com
         console.log('  Code to redeem game:', chalk.blue(code));
         if (store == 'legacy games') { // may be different URL like https://legacygames.com/primeday/puzzleoftheyear/
-          redeem[store] = await (await page.$('li:has-text("Click here") a')).getAttribute('href'); // full text: Click here to enter your redemption code.
+          redeem[store] = await page.locator('li:has-text("Click here") a').getAttribute('href'); // full text: Click here to enter your redemption code.
         }
         let redeem_url = redeem[store];
         if (store == 'gog.com') redeem_url += '/' + code; // to log and notify, but can't use for goto below (captcha)
@@ -279,12 +285,17 @@ try {
               const r2 = page2.waitForResponse(r => r.request().method() == 'POST' && r.url().startsWith('https://redeem.gog.com/'));
               await page2.click('[type="submit"]'); // click Redeem
               const r2t = await (await r2).text();
-              const reason2 = JSON.parse(r2t).reason;
-              if (r2t == '{}') {
+              let r2j = {};
+              try {
+                r2j = JSON.parse(r2t);
+              } catch { /* not json */ }
+              // 2025: {"type":"async_processing","checkoutUrl":null} followed by "Code redeemed successfully!"; before: {}
+              if (r2t == '{}' || r2j?.type == 'async_processing') {
+                if (r2j?.type == 'async_processing') await page2.locator('h1:has-text("Code redeemed successfully!")').waitFor().catch(_ => { });
                 redeem_action = 'redeemed';
                 console.log('  Redeemed successfully.');
                 db.data[user][title].status = 'claimed and redeemed';
-              } else if (reason2?.includes('captcha')) {
+              } else if (r2j?.reason?.includes('captcha')) {
                 redeem_action = 'redeem (got captcha)';
                 console.error('  Got captcha; could not redeem!');
               } else {
@@ -321,7 +332,7 @@ try {
                 if (j?.events?.cart.length && j.events.cart[0]?.data?.reason == 'UserAlreadyOwnsContent') {
                   redeem_action = 'already redeemed';
                   console.error('  error: UserAlreadyOwnsContent');
-                } else if (true) { // TODO what's returned on success?
+                } else { // TODO what's returned on success?
                   redeem_action = 'redeemed';
                   db.data[user][title].status = 'claimed and redeemed?';
                   console.log('  Redeemed successfully? Please report if not in https://github.com/vogler/free-games-claimer/issues/5');

@@ -11,6 +11,7 @@ export const cfg = {
   time: process.env.TIME == '1', // log duration of each step
   dryrun: process.env.DRYRUN == '1', // don't claim anything
   interactive: process.env.INTERACTIVE == '1', // confirm to claim, default skip
+  nowait: process.env.NOWAIT == '1', // fail fast when not logged in instead of waiting LOGIN_TIMEOUT for a manual login (useful for unattended/scheduled runs)
   show: process.env.SHOW == '1', // run non-headless
   get headless() {
     return !this.debug && !this.show;

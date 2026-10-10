@@ -60,6 +60,12 @@ try {
 
   if (!await isLoggedIn()) {
     console.error('Not signed in to Steam. Please login.');
+    if (cfg.nowait || !cfg.steam_username && cfg.headless) {
+      console.error(cfg.nowait ? 'NOWAIT=1 -> not waiting for login. Exit!' : 'No STEAM_USERNAME set and running headless -> nobody can login. Exit!');
+      await notify('steam-games: not signed in. Login via noVNC or set STEAM_USERNAME/STEAM_PASSWORD.');
+      await context.close();
+      process.exit(1);
+    }
     if (cfg.novnc_port) console.info(`Open http://localhost:${cfg.novnc_port} to login inside Docker.`);
     if (!cfg.debug) context.setDefaultTimeout(cfg.login_timeout);
     console.info(`Login timeout is ${cfg.login_timeout / 1000} seconds!`);
