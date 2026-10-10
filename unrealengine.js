@@ -59,7 +59,7 @@ try {
     return await page.locator('a[href="/library"]').count() > 0;
   };
 
-  while (!(await isLoggedIn())) {
+  while (!await isLoggedIn()) {
     console.error('Not signed in anymore. Please login in the browser or here in the terminal.');
     if (cfg.novnc_port) console.info(`Open http://localhost:${cfg.novnc_port} to login inside the docker container.`);
     if (!cfg.debug) context.setDefaultTimeout(cfg.login_timeout); // give user some extra time to log in

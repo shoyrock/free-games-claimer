@@ -56,10 +56,16 @@ let user = 'unknown';
 try {
   await page.goto(URL_STORE, { waitUntil: 'domcontentloaded' });
 
-  const isLoggedIn = async () => (await page.locator('#account_pulldown, a.username, .persona_name_text_content').count()) > 0;
+  const isLoggedIn = async () => await page.locator('#account_pulldown, a.username, .persona_name_text_content').count() > 0;
 
   if (!await isLoggedIn()) {
     console.error('Not signed in to Steam. Please login.');
+    if (cfg.nowait || !cfg.steam_username && cfg.headless) {
+      console.error(cfg.nowait ? 'NOWAIT=1 -> not waiting for login. Exit!' : 'No STEAM_USERNAME set and running headless -> nobody can login. Exit!');
+      await notify('steam-games: not signed in. Login via noVNC or set STEAM_USERNAME/STEAM_PASSWORD.');
+      await context.close();
+      process.exit(1);
+    }
     if (cfg.novnc_port) console.info(`Open http://localhost:${cfg.novnc_port} to login inside Docker.`);
     if (!cfg.debug) context.setDefaultTimeout(cfg.login_timeout);
     console.info(`Login timeout is ${cfg.login_timeout / 1000} seconds!`);
@@ -99,7 +105,7 @@ try {
   }
 
   user = await page.locator('#account_pulldown').first().innerText().catch(
-    () => page.locator('.persona_name_text_content').first().innerText().catch(() => 'unknown')
+    () => page.locator('.persona_name_text_content').first().innerText().catch(() => 'unknown'),
   );
   console.log(`Signed in as ${user}`);
   db.data[user] ||= {};

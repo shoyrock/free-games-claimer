@@ -19,7 +19,7 @@ while true; do
   eval "$SCRIPTS" || true  # || true so one failure doesn't stop the others
   # Update healthcheck sentinel
   mkdir -p /fgc/data 2>/dev/null || true
-  date -Iseconds > /fgc/data/lastrun.json 2>/dev/null || true
+  echo "{\"script\":\"scheduler\",\"time\":\"$(date -Iseconds)\"}" > /fgc/data/lastrun.json 2>/dev/null || true
   echo "=== Run finished at $(date) ==="
 
   # Calculate seconds until next SCHEDULE_HOUR:00

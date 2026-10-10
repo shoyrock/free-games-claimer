@@ -1,6 +1,6 @@
 import { chromium } from 'patchright'; // patchright patches Chromium to bypass bot detection
 import chalk from 'chalk';
-import { resolve, jsonDb, datetime, filenamify, prompt, notify, html_game_list, handleSIGINT, clearBrowserLock, writeLastRun, stealth, generateFingerprint } from './src/util.js';
+import { resolve, jsonDb, datetime, filenamify, prompt, confirm, notify, html_game_list, handleSIGINT, clearBrowserLock, writeLastRun, stealth, generateFingerprint } from './src/util.js';
 import { cfg } from './src/config.js';
 
 const screenshot = (...a) => resolve(cfg.dir.screenshots, 'gog', ...a);
@@ -55,9 +55,16 @@ try {
 
   // page.click('#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll').catch(_ => { }); // does not work reliably, solved by setting CookieConsent above
   const signIn = page.locator('a:has-text("Sign in")').first();
-  await Promise.any([signIn.waitFor(), page.waitForSelector('#menuUsername')]);
-  while (await signIn.isVisible()) {
+  const username = page.locator('#menuUsername').first();
+  await Promise.any([signIn.waitFor(), username.waitFor()]).catch(_ => { }); // patchright sometimes fails here with 'JSHandles can be evaluated only in the context they were created' - the isVisible checks below handle it
+  while (await signIn.isVisible() && !await username.isVisible()) {
     console.error('Not signed in anymore.');
+    if (cfg.nowait) {
+      console.error('NOWAIT=1 -> not waiting for login. Exit!');
+      await notify('gog: not signed in. Login via noVNC or set GOG_EMAIL/GOG_PASSWORD.');
+      await context.close();
+      process.exit(1);
+    }
     await signIn.click();
     // it then creates an iframe for the login
     await page.waitForSelector('#GalaxyAccountsFrameContainer iframe'); // TODO needed?
@@ -69,10 +76,11 @@ try {
     const email = cfg.gog_email || await prompt({ message: 'Enter email' });
     const password = email && (cfg.gog_password || await prompt({ type: 'password', message: 'Enter password' }));
     if (email && password) {
-      iframe.locator('a[href="/logout"]').click().catch(_ => { }); // Click 'Change account' (email from previous login is set in some cookie)
-      await iframe.locator('#login_username').fill(email);
+      // 'Change account' link (a[href="/logout"]) did not work with patchright; the email field is disabled (pre-filled) if the account is remembered
+      if (!await iframe.locator('#login_username').isDisabled()) await iframe.locator('#login_username').fill(email);
       await iframe.locator('#login_password').fill(password);
       await iframe.locator('#login_login').click();
+      await page.waitForTimeout(2000); // patchright waited forever for the MFA locator otherwise
       // handle MFA, but don't await it
       iframe.locator('form[name=second_step_authentication]').waitFor().then(async () => {
         console.log('Two-Step Verification - Enter security code');
@@ -107,6 +115,7 @@ try {
   db.data[user] ||= {};
 
   const banner = page.locator('#giveaway');
+  await banner.waitFor({ timeout: 5000 }).catch(_ => { }); // the banner is rendered after load, don't miss it
   if (!await banner.count()) {
     console.log('Currently no free giveaway!');
   } else {
@@ -120,7 +129,10 @@ try {
     const url = await banner.locator('a').first().getAttribute('href');
     console.log(`Current free game: ${chalk.blue(title)} - ${url}`);
     db.data[user][title] ||= { title, time: datetime(), url };
-    if (cfg.dryrun) { console.log('  DRYRUN=1 -> Skip claim!'); process.exit(0); }
+    if (cfg.dryrun) {
+      console.log('  DRYRUN=1 -> Skip claim!'); process.exit(0);
+    }
+    if (cfg.interactive && !await confirm()) process.exit(0);
     // await page.locator('#giveaway:not(.is-loading)').waitFor(); // otherwise screenshot is sometimes with loading indicator instead of game title; #TODO fix, skipped due to timeout, see #240
     await banner.screenshot({ path: screenshot(`${filenamify(title)}.png`) }); // overwrites every time - only keep first?
 
@@ -141,7 +153,7 @@ try {
       let message;
       try {
         message = JSON.parse(response).message;
-      } catch (_) {
+      } catch {
         console.error('  Unexpected response from GOG claim API:', response);
         message = response;
       }

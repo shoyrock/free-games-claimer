@@ -1,0 +1,31 @@
+name: Test
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  schedule:
+    - cron: '17 6 * * *' # daily: catches changes in Epic's free-games JSON early, before a run fails
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Lint
+        run: npx eslint .
+      - name: Syntax check
+        run: for f in *.js src/*.js test/*.js; do node --check "$f"; done
+      - name: Unit tests + live Epic free-games JSON
+        run: |
+          node test/epic-games-free.js
+          node test/epic-games-selectors.js
