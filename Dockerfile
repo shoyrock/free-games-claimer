@@ -9,7 +9,7 @@ FROM ubuntu:jammy
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Install up-to-date node & npm, deps for virtual screen & noVNC, firefox, pip for apprise.
+# Install up-to-date node & npm, deps for virtual screen & noVNC, Chromium libs, pip for apprise.
 RUN apt-get update \
     && apt-get install --no-install-recommends -y curl ca-certificates gnupg \
     && mkdir -p /etc/apt/keyrings \
@@ -67,10 +67,9 @@ RUN pip install apprise
 WORKDIR /fgc
 COPY package*.json ./
 
-# Playwright installs patched firefox to ~/.cache/ms-playwright/firefox-*
-# Requires some system deps to run (see inlined install-deps above).
-RUN npm install
-# Install patchright's patched Chromium browser binary
+# Reproducible install from package-lock.json, no dev deps (eslint) in the image, no postinstall scripts (patchright's browser download is done explicitly below).
+RUN npm ci --omit=dev --ignore-scripts
+# Install patchright's patched Chromium browser binary (plus headless shell for SHOW=0)
 RUN npx patchright install chromium
 
 COPY . .

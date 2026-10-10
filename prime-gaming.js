@@ -41,6 +41,7 @@ await stealth(context, fp);
 await context.addInitScript(() => {
   // Reject passkey creation/login prompts silently
   const reject = () => Promise.reject(new DOMException('Not allowed', 'NotAllowedError'));
+  // eslint-disable-next-line no-undef
   Object.defineProperty(navigator, 'credentials', {
     value: { create: reject, get: reject, store: () => Promise.resolve(), preventSilentAccess: () => Promise.resolve() },
     writable: false,
@@ -142,6 +143,7 @@ try {
   const games = page.locator('div[data-a-target="offer-list-FGWP_FULL"]');
   await games.waitFor();
   // await scrollUntilStable(() => games.locator('.item-card__action').count()); // number of games
+  // eslint-disable-next-line no-undef
   await scrollUntilStable(() => page.evaluate(() => document.querySelector('.tw-full-width').scrollHeight)); // height may change during loading while number of games is still the same?
   console.log('Number of already claimed games (total):', await games.locator('p:has-text("Collected")').count());
   // can't use .all() since the list of elements via locator will change after click while we iterate over it
@@ -164,11 +166,11 @@ try {
     const [p, isNew] = await sameOrNewPage(url);
     const dueDateOrg = await p.locator('.availability-date .tw-bold').innerText();
     const dueDate = new Date(Date.parse(dueDateOrg + ' 17:00'));
-    const daysLeft = (dueDate.getTime() - Date.now())/1000/60/60/24;
+    const daysLeft = (dueDate.getTime() - Date.now()) / 1000 / 60 / 60 / 24;
     console.log(' ', await p.locator('.availability-date').innerText(), '->', daysLeft.toFixed(2));
     if (isNew) await p.close();
     return daysLeft > cfg.pg_timeLeft;
-  }
+  };
   console.log('\nNumber of free unclaimed games (Prime Gaming):', internal.length);
   // claim games in internal store
   for (const card of internal) {
@@ -385,7 +387,7 @@ try {
     await loot.waitFor();
 
     process.stdout.write('Loading all DLCs on page...');
-    await scrollUntilStable(() => loot.locator('[data-a-target="item-card"]').count())
+    await scrollUntilStable(() => loot.locator('[data-a-target="item-card"]').count());
 
     console.log('\nNumber of already claimed DLC:', await loot.locator('p:has-text("Collected")').count());
 

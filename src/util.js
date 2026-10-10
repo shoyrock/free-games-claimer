@@ -18,18 +18,18 @@ export const generateFingerprint = (width = 1920, height = 1080) => {
   if (existsSync(fpFile)) {
     try {
       return JSON.parse(_require('node:fs').readFileSync(fpFile, 'utf8'));
-    } catch (_) { /* corrupted file - regenerate */ }
+    } catch { /* corrupted file - regenerate */ }
   }
   let fp;
   try {
     fp = _fingerprintGenerator.getFingerprint({ screen: { minWidth: width, maxWidth: width, minHeight: height, maxHeight: height } });
-  } catch (_) {
+  } catch {
     fp = _fingerprintGenerator.getFingerprint();
   }
   try {
     writeFileSync(fpFile, JSON.stringify(fp, null, 2));
     console.log('Generated new browser fingerprint, saved to', fpFile);
-  } catch (_) { /* non-critical */ }
+  } catch { /* non-critical */ }
   return fp;
 };
 // not the same since these will give the absolute paths for this file instead of for the file using them
@@ -41,14 +41,14 @@ export const dataDir = s => path.resolve(__dirname, '..', 'data', s);
 // Remove stale browser profile lock left behind by a crashed/killed previous run.
 // Firefox uses parent.lock, Chromium/patchright uses SingletonLock.
 // On Windows the file is held open by the process, so if removal fails the profile is still in use.
-export const clearBrowserLock = (dir) => {
+export const clearBrowserLock = dir => {
   for (const lockName of ['parent.lock', 'SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
     const lockFile = path.join(dir, lockName);
     if (existsSync(lockFile)) {
       try {
         unlinkSync(lockFile);
         console.log('Removed stale browser lock file:', lockFile);
-      } catch (_) {
+      } catch {
         console.error(`Browser profile is already in use: ${lockFile}`);
         console.error('Close other browser instances sharing this profile, or set a different BROWSER_DIR.');
         process.exit(1);
@@ -58,11 +58,11 @@ export const clearBrowserLock = (dir) => {
 };
 
 // Write a lastrun timestamp so Docker HEALTHCHECK can verify the scheduler is alive.
-export const writeLastRun = (script) => {
+export const writeLastRun = script => {
   try {
     const p = dataDir('lastrun.json');
     writeFileSync(p, JSON.stringify({ script, time: new Date().toISOString() }));
-  } catch (_) { /* non-critical */ }
+  } catch { /* non-critical */ }
 };
 
 // modified path.resolve to return null if first argument is '0', used to disable screenshots
@@ -146,7 +146,7 @@ export const stealth = async (context, fingerprint = null) => {
   // chrome.runtime patch: puppeteer-extra-plugin-stealth's version is broken in Chrome 100+
   // because the real runtime object structure changed. We patch it manually.
   // Without this, bot detectors see window.chrome.runtime === undefined which is detectable.
-  await context.addInitScript(() => {
+  await context.addInitScript(() => { /* global window */
     if (!window.chrome) return;
     if (window.chrome.runtime && window.chrome.runtime.PlatformOs) return; // already set correctly (non-headless real Chrome)
     try {
@@ -157,15 +157,19 @@ export const stealth = async (context, fingerprint = null) => {
           RequestUpdateCheckStatus: { THROTTLED: 'throttled', NO_UPDATE: 'no_update', UPDATE_AVAILABLE: 'update_available' },
           OnInstalledReason: { INSTALL: 'install', UPDATE: 'update', CHROME_UPDATE: 'chrome_update', SHARED_MODULE_UPDATE: 'shared_module_update' },
           OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' },
-          connect: () => { throw new Error('Extension context invalidated.'); },
-          sendMessage: () => { throw new Error('Extension context invalidated.'); },
+          connect: () => {
+            throw new Error('Extension context invalidated.');
+          },
+          sendMessage: () => {
+            throw new Error('Extension context invalidated.');
+          },
           id: undefined,
         },
         writable: false,
         enumerable: false,
         configurable: false,
       });
-    } catch (_) { /* already defined by real Chrome runtime - that's fine */ }
+    } catch { /* already defined by real Chrome runtime - that's fine */ }
   });
 };
 
@@ -220,7 +224,7 @@ export const notify = html => {
 
 // Direct Telegram notification without Apprise (set TG_TOKEN and TG_CHAT_ID env vars).
 // Works independently of NOTIFY/apprise - can be used alongside or as replacement.
-export const notifyTelegram = async (html) => {
+export const notifyTelegram = async html => {
   if (!cfg.tg_token || !cfg.tg_chat_id) return;
   try {
     const res = await fetch(`https://api.telegram.org/bot${cfg.tg_token}/sendMessage`, {

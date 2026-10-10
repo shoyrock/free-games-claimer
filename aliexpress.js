@@ -8,8 +8,8 @@ import { FingerprintInjector } from 'fingerprint-injector';
 import { FingerprintGenerator } from 'fingerprint-generator';
 
 const { fingerprint, headers } = new FingerprintGenerator().getFingerprint({
-    devices: ["mobile"],
-    operatingSystems: ["android"],
+  devices: ['mobile'],
+  operatingSystems: ['android'],
 });
 
 const context = await firefox.launchPersistentContext(cfg.dir.browser, {
@@ -21,11 +21,11 @@ const context = await firefox.launchPersistentContext(cfg.dir.browser, {
   handleSIGINT: false, // have to handle ourselves and call context.close(), otherwise recordings from above won't be saved
   userAgent: fingerprint.navigator.userAgent,
   viewport: {
-      width: fingerprint.screen.width,
-      height: fingerprint.screen.height,
+    width: fingerprint.screen.width,
+    height: fingerprint.screen.height,
   },
   extraHTTPHeaders: {
-      'accept-language': headers['accept-language'],
+    'accept-language': headers['accept-language'],
   },
 });
 handleSIGINT(context);
@@ -36,7 +36,7 @@ context.setDefaultTimeout(cfg.debug ? 0 : cfg.timeout);
 
 const page = context.pages().length ? context.pages()[0] : await context.newPage(); // should always exist
 
-const auth = async (url) => {
+const auth = async url => {
   console.log('auth', url);
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   // redirects to https://login.aliexpress.com/?return_url=https%3A%2F%2Fwww.aliexpress.com%2Fp%2Fcoin-pc-index%2Findex.html
@@ -112,7 +112,9 @@ try {
     // gogo,
     // euro,
     merge,
-  ].reduce((a, f) => a.then(async _ => { await auth(urls[f.name]); await f(); console.log() }), Promise.resolve());
+  ].reduce((a, f) => a.then(async _ => {
+    await auth(urls[f.name]); await f(); console.log();
+  }), Promise.resolve());
 
   // await page.pause();
 } catch (error) {

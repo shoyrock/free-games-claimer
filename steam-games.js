@@ -56,7 +56,7 @@ let user = 'unknown';
 try {
   await page.goto(URL_STORE, { waitUntil: 'domcontentloaded' });
 
-  const isLoggedIn = async () => (await page.locator('#account_pulldown, a.username, .persona_name_text_content').count()) > 0;
+  const isLoggedIn = async () => await page.locator('#account_pulldown, a.username, .persona_name_text_content').count() > 0;
 
   if (!await isLoggedIn()) {
     console.error('Not signed in to Steam. Please login.');
@@ -99,7 +99,7 @@ try {
   }
 
   user = await page.locator('#account_pulldown').first().innerText().catch(
-    () => page.locator('.persona_name_text_content').first().innerText().catch(() => 'unknown')
+    () => page.locator('.persona_name_text_content').first().innerText().catch(() => 'unknown'),
   );
   console.log(`Signed in as ${user}`);
   db.data[user] ||= {};

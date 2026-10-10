@@ -2,10 +2,13 @@
 // Without an argument, fetches the live JSON from Epic and prints the current free games.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { freeGameUrlsFromJson, URL_FREE_GAMES_API } from '../src/epic-games-free.js';
+import { freeGameUrlsFromJson, freeGamesFromJson, URL_FREE_GAMES_API } from '../src/epic-games-free.js';
 
 const offer = (slug, start, end, pct = 0, extra = {}) => ({
   title: slug,
+  id: `id-${slug}`,
+  namespace: `ns-${slug}`,
+  offerType: 'BASE_GAME',
   urlSlug: slug,
   catalogNs: { mappings: [{ pageSlug: slug, pageType: 'productHome' }] },
   promotions: { promotionalOffers: [{ promotionalOffers: [{ startDate: start, endDate: end, discountSetting: { discountType: 'PERCENTAGE', discountPercentage: pct } }] }], upcomingPromotionalOffers: [] },
@@ -28,6 +31,7 @@ assert.deepEqual(freeGameUrlsFromJson(body, now), [
   'https://store.epicgames.com/en-US/p/home-slug',
   'https://store.epicgames.com/en-US/p/product-slug',
 ]);
+assert.deepEqual(freeGamesFromJson(body, now)[0], { title: 'free-now', url: 'https://store.epicgames.com/en-US/p/free-now', slug: 'free-now', namespace: 'ns-free-now', id: 'id-free-now', offerType: 'BASE_GAME' });
 assert.deepEqual(freeGameUrlsFromJson({}, now), []);
 assert.deepEqual(freeGameUrlsFromJson(null, now), []);
 console.log('unit tests passed');

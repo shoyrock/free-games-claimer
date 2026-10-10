@@ -120,7 +120,9 @@ try {
     const url = await banner.locator('a').first().getAttribute('href');
     console.log(`Current free game: ${chalk.blue(title)} - ${url}`);
     db.data[user][title] ||= { title, time: datetime(), url };
-    if (cfg.dryrun) { console.log('  DRYRUN=1 -> Skip claim!'); process.exit(0); }
+    if (cfg.dryrun) {
+      console.log('  DRYRUN=1 -> Skip claim!'); process.exit(0);
+    }
     // await page.locator('#giveaway:not(.is-loading)').waitFor(); // otherwise screenshot is sometimes with loading indicator instead of game title; #TODO fix, skipped due to timeout, see #240
     await banner.screenshot({ path: screenshot(`${filenamify(title)}.png`) }); // overwrites every time - only keep first?
 
@@ -141,7 +143,7 @@ try {
       let message;
       try {
         message = JSON.parse(response).message;
-      } catch (_) {
+      } catch {
         console.error('  Unexpected response from GOG claim API:', response);
         message = response;
       }

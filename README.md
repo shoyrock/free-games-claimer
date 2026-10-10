@@ -85,6 +85,7 @@ Available options/variables and their default values:
 | EG_OTPKEY     	|         	| Epic Games MFA OTP key.                                                	|
 | EG_PARENTALPIN 	|         	| Epic Games Parental Controls PIN.                                      	|
 | EG_MOBILE     	| 0       	| Epic Games: also claim free mobile (Android/iOS) games if 1.           	|
+| EG_SELECTORS_URL	| (repo)  	| Epic Games: URL of an updated `epic-games-selectors.json`, 0 to disable. 	|
 | PG_EMAIL      	|         	| Prime Gaming email for login. Overrides EMAIL.                         	|
 | PG_PASSWORD   	|         	| Prime Gaming password for login. Overrides PASSWORD.                   	|
 | PG_OTPKEY     	|         	| Prime Gaming MFA OTP key.                                              	|
@@ -130,6 +131,15 @@ Run `node epic-games` (locally or in Docker).
 
 The free games are read from Epic's `freeGamesPromotions` JSON (the same data the store page is built from), so the claimer keeps working when Epic redesigns the free-games page. The HTML is only used as a fallback.
 Set `EG_MOBILE=1` to also claim the free mobile (Android/iOS) games.
+
+#### When Epic changes the store page
+Epic redesigns the store a few times a year. The claimer is built to survive that:
+- The list of free games comes from Epic's JSON, not from the HTML.
+- Every locator lives in [`src/epic-games-selectors.json`](src/epic-games-selectors.json) and every step accepts several candidates (old and new markup at the same time).
+- On start the claimer fetches the latest version of that file from this repo's `main` branch (`EG_SELECTORS_URL`, set to `0` to disable), so a selector fix merged here reaches running containers on their next run without rebuilding or pulling an image.
+- You can hot-fix locally: put a (partial) copy in `data/epic-games-selectors.json` - only the keys you include are overridden, e.g. `{"checkout": {"placeOrder": ["button:has-text(\"Claim\")"]}}`.
+- If the product page can't be parsed at all, the claimer falls back to Epic's standalone checkout URL built from the offer id in the JSON.
+- When a step fails, a screenshot, the HTML and the list of visible buttons are saved to `data/screenshots/epic-games/debug/` so the broken selector can be identified in a minute. Run `node test/epic-games-free.js` to check that the game list still works.
 
 Troubleshooting:
 - `Got a Cloudflare challenge`: Epic now fronts the store with Cloudflare, which blocks datacenter/VPN IPs and headless browsers. Run with `SHOW=1` (default in Docker) on a residential IP and solve the challenge via noVNC if it keeps showing.

@@ -33,6 +33,7 @@ export const cfg = {
   eg_password: process.env.EG_PASSWORD || process.env.PASSWORD,
   eg_otpkey: process.env.EG_OTPKEY,
   eg_parentalpin: process.env.EG_PARENTALPIN,
+  eg_selectors_url: process.env.EG_SELECTORS_URL ?? 'https://raw.githubusercontent.com/shoyrock/free-games-claimer/main/src/epic-games-selectors.json', // epic-games: load updated locators from here (0 to disable), see src/epic-games-selectors.js
   eg_mobile: process.env.EG_MOBILE == '1', // also claim free mobile (Android/iOS) games, https://github.com/vogler/free-games-claimer/issues/474
   // auth prime-gaming
   pg_email: process.env.PG_EMAIL || process.env.EMAIL,

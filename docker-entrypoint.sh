@@ -3,32 +3,20 @@
 set -eo pipefail # exit on error, error on any fail in pipe (not just last cmd); add -x to print each cmd; see gist bash_strict_mode.md
 
 echo "Version: https://github.com/vogler/free-games-claimer/tree/${COMMIT}"
-[ ! -z $BRANCH ] && [ $BRANCH != "main" ] && echo "Branch: ${BRANCH}"
+[ -n "$BRANCH" ] && [ "$BRANCH" != "main" ] && echo "Branch: ${BRANCH}"
 echo "Build: $NOW"
 
+BROWSER="${BROWSER_DIR:-/fgc/data/browser}"
+mkdir -p "$BROWSER"
 # Remove chromium profile lock.
 # When running in docker and then killing it, on the next run chromium displayed a dialog to unlock the profile which made the script time out.
-# Maybe due to changed hostname of container or due to how the docker container kills playwright - didn't check.
 # https://bugs.chromium.org/p/chromium/issues/detail?id=367048
-rm -f /fgc/data/browser/SingletonLock
-
-# Firefox preferences are stored in $BROWSER_DIR/pref.js and can be overridden by a file user.js
-# Since this file has to be in the volume (data/browser), we can't do this in Dockerfile.
-mkdir -p /fgc/data/browser
-# fix for 'Incorrect response' after solving a captcha correctly - https://github.com/vogler/free-games-claimer/issues/261#issuecomment-1868385830
-# echo 'user_pref("privacy.resistFingerprinting", true);' > /fgc/data/browser/user.js
-cat << EOT > /fgc/data/browser/user.js
-user_pref("privacy.resistFingerprinting", true);
-// user_pref("privacy.resistFingerprinting.letterboxing", true);
-// user_pref("browser.contentblocking.category", "strict");
-// user_pref("webgl.disabled", true);
-EOT
-# TODO disable session restore message?
+rm -f "$BROWSER/SingletonLock" "$BROWSER/SingletonCookie" "$BROWSER/SingletonSocket"
 
 # Remove X server display lock, fix for `docker compose up` which reuses container which made it fail after initial run, https://github.com/vogler/free-games-claimer/issues/31
 # echo $DISPLAY
 # ls -l /tmp/.X11-unix/
-rm -f /tmp/.X11-lock
+rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
 
 # 6000+SERVERNUM is the TCP port Xvfb is listening on:
 # SERVERNUM=$(echo "$DISPLAY" | sed 's/:\([0-9][0-9]*\).*/\1/')

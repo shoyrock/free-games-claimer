@@ -2,41 +2,67 @@ import { chromium } from 'patchright'; // patchright patches Chromium to bypass 
 import { authenticator } from 'otplib';
 import chalk from 'chalk';
 import path from 'path';
-import { existsSync, writeFileSync } from 'fs';
-import { resolve, jsonDb, datetime, stealth, filenamify, prompt, confirm, notify, html_game_list, handleSIGINT, clearBrowserLock, writeLastRun, withRetry, generateFingerprint } from './src/util.js';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { resolve, jsonDb, datetime, stealth, filenamify, prompt, confirm, notify, html_game_list, handleSIGINT, clearBrowserLock, writeLastRun, withRetry, generateFingerprint, dataDir } from './src/util.js';
 import { cfg } from './src/config.js';
 import { getMobileGames } from './src/epic-games-mobile.js';
-import { freeGameUrlsFromJson, URL_STORE, URL_FREE_GAMES_API } from './src/epic-games-free.js';
+import { freeGamesFromJson, URL_STORE, URL_FREE_GAMES_API } from './src/epic-games-free.js';
+import { loadSelectors, anyOf } from './src/epic-games-selectors.js';
 
 const screenshot = (...a) => resolve(cfg.dir.screenshots, 'epic-games', ...a);
 
 const URL_CLAIM = URL_STORE + '/en-US/free-games';
 const URL_LOGIN = 'https://www.epicgames.com/id/login?lang=en-US&noHostRedirect=true&redirectUrl=' + URL_CLAIM;
+
+console.log(datetime(), 'started checking epic-games');
+
+const db = await jsonDb('epic-games.json', {});
+
+// Locators are data, not code: bundled json <- EG_SELECTORS_URL <- data/epic-games-selectors.json, see src/epic-games-selectors.js
+const S = await loadSelectors({ url: cfg.eg_selectors_url, file: dataDir('epic-games-selectors.json') });
+const $ = (scope, sel) => anyOf(scope, sel); // one locator matching any of the candidate selectors
+
 // Fetch free games from node (no browser involved, so this also works when the store page itself is behind a Cloudflare challenge).
 // Falls back to fetching from inside the page (uses the browser's IP/cookies) if the direct request fails.
-const getGameUrls = async page => {
+const getFreeGames = async page => {
   try {
-    const res = await fetch(URL_FREE_GAMES_API);
+    const res = await fetch(URL_FREE_GAMES_API, { signal: AbortSignal.timeout(15000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return freeGameUrlsFromJson(await res.json());
+    return freeGamesFromJson(await res.json());
   } catch (e) {
     console.error('Failed to fetch free games JSON from node:', e.message, '- trying from inside the browser...');
   }
-
   const body = await page.evaluate(url => fetch(url).then(r => r.json()), URL_FREE_GAMES_API);
-  return freeGameUrlsFromJson(body);
+  return freeGamesFromJson(body);
 };
 
 // Cloudflare (used by store.epicgames.com since 2025) sometimes shows a challenge page, e.g. for datacenter/VPN IPs or when headless.
 const isCloudflareChallenge = async page => {
   const title = await page.title().catch(_ => '');
-  if ((/just a moment|one more step|attention required/i).test(title)) return true;
-  return await page.locator('text=/complete a security check|verify you are human/i').count().catch(_ => 0) > 0;
+  if (new RegExp(S.cloudflareTitle, 'i').test(title)) return true;
+  return await $(page, S.cloudflareText).count().catch(_ => 0) > 0;
 };
+class CloudflareError extends Error {}
 
-console.log(datetime(), 'started checking epic-games');
-
-const db = await jsonDb('epic-games.json', {});
+// Save what the page looked like when a step failed: screenshot + HTML + the visible buttons. Makes fixing the selectors a 1-minute job instead of guesswork.
+const dumpDiagnostics = async (page, name) => {
+  const dir = screenshot('debug');
+  if (!dir) return;
+  try {
+    mkdirSync(dir, { recursive: true });
+    const base = path.join(dir, `${filenamify(name)}_${filenamify(datetime())}`);
+    await page.screenshot({ path: `${base}.png`, fullPage: true }).catch(_ => { });
+    writeFileSync(`${base}.html`, await page.content().catch(_ => ''));
+    const buttons = await page.evaluate(() => [...document.querySelectorAll('button, a[role="button"]')] // eslint-disable-line no-undef
+      .filter(b => b.offsetParent !== null)
+      .map(b => `${b.textContent.trim().slice(0, 40)}${b.dataset.testid ? ` [data-testid=${b.dataset.testid}]` : ''}`)
+      .filter(Boolean)).catch(_ => []);
+    console.error(`  Saved diagnostics to ${base}.{png,html}. Visible buttons: ${JSON.stringify(buttons)}`);
+    console.error('  If Epic changed the page, adjust the selector in data/epic-games-selectors.json (see README) - no rebuild needed.');
+  } catch (e) {
+    console.error('  Failed to save diagnostics:', e.message);
+  }
+};
 
 if (cfg.time) console.time('startup');
 
@@ -64,6 +90,7 @@ handleSIGINT(context);
 await stealth(context, fp);
 
 if (!cfg.debug) context.setDefaultTimeout(cfg.timeout);
+if (cfg.headless) console.warn('Running headless (SHOW=0). Epic/Cloudflare are more likely to show captchas or block headless browsers - use SHOW=1 if you run into problems.');
 
 const page = context.pages().length ? context.pages()[0] : await context.newPage(); // should always exist
 await page.setViewportSize({ width: cfg.width, height: cfg.height }); // TODO workaround for https://github.com/vogler/free-games-claimer/issues/277 until Playwright fixes it
@@ -81,43 +108,30 @@ if (cfg.debug_network) {
 const notify_games = [];
 let user;
 
-try {
-  await context.addCookies([
-    { name: 'OptanonAlertBoxClosed', value: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), domain: '.epicgames.com', path: '/' }, // Accept cookies to get rid of banner to save space on screen. Set accept time to 5 days ago.
-    { name: 'HasAcceptedAgeGates', value: 'USK:9007199254740991,general:18,EPIC SUGGESTED RATING:18', domain: 'store.epicgames.com', path: '/' }, // gets rid of 'To continue, please provide your date of birth', https://github.com/vogler/free-games-claimer/issues/275, USK number doesn't seem to matter, cookie from 'Fallout 3: Game of the Year Edition'
-  ]);
-
-  await page.goto(URL_CLAIM, { waitUntil: 'domcontentloaded' }); // 'domcontentloaded' faster than default 'load' https://playwright.dev/docs/api/class-page#page-goto
-
-  if (cfg.time) console.timeEnd('startup');
-  if (cfg.time) console.time('login');
-
-  // page.click('button:has-text("Accept All Cookies")').catch(_ => { }); // Not needed anymore since we set the cookie above. Clicking this did not always work since the message was animated in too slowly.
-  page.locator('button:has-text("Continue")').click({ timeout: 5000 }).catch(_ => { }); // already logged in, but need to accept updated "Epic Games Privacy Policy" - short timeout so this doesn't click a Continue button on the login page later
-
-  // The store's web component <egs-navigation> tells us if we are logged in. It is missing on error pages (Cloudflare challenge, 404, maintenance).
-  const nav = page.locator('egs-navigation');
-  const waitForNav = async () => {
-    if (await nav.count()) return;
-    await nav.waitFor({ state: 'attached' }).catch(async e => {
-      if (await isCloudflareChallenge(page)) {
-        console.error('Got a Cloudflare challenge ("Just a moment..." / "One more step") instead of the store page!');
-        console.error('Epic blocks this IP/browser as a bot. Solve the challenge in the browser (noVNC), use a residential IP (no datacenter/VPN) and run with SHOW=1.');
-        await notify('epic-games: got Cloudflare challenge. Solve it in the browser or get a new IP address.');
-        if (!cfg.headless) { // give the user some time to solve the challenge manually
-          console.info(`Waiting ${cfg.login_timeout / 1000} seconds for the challenge to be solved...`);
-          await nav.waitFor({ state: 'attached', timeout: cfg.login_timeout }).catch(_ => { });
-          if (await nav.count()) return;
-        }
-        throw new Error('Blocked by Cloudflare challenge on store.epicgames.com');
+// The store's web component <egs-navigation> tells us if we are logged in. It is missing on error pages (Cloudflare challenge, 404, maintenance).
+const nav = $(page, S.nav).first();
+const waitForNav = async () => {
+  if (await nav.count()) return;
+  await nav.waitFor({ state: 'attached' }).catch(async e => {
+    if (await isCloudflareChallenge(page)) {
+      console.error('Got a Cloudflare challenge ("Just a moment..." / "One more step") instead of the store page!');
+      console.error('Epic blocks this IP/browser as a bot. Solve the challenge in the browser (noVNC), use a residential IP (no datacenter/VPN) and run with SHOW=1.');
+      await notify('epic-games: got Cloudflare challenge. Solve it in the browser or get a new IP address.');
+      if (!cfg.headless) { // give the user some time to solve the challenge manually
+        console.info(`Waiting ${cfg.login_timeout / 1000} seconds for the challenge to be solved...`);
+        await nav.waitFor({ state: 'attached', timeout: cfg.login_timeout }).catch(_ => { });
+        if (await nav.count()) return;
       }
-      console.error('Store page did not load properly (no <egs-navigation>). Page title:', await page.title().catch(_ => '?'), 'URL:', page.url());
-      throw e;
-    });
-  };
-  await waitForNav();
+      throw new CloudflareError('Blocked by Cloudflare challenge on store.epicgames.com');
+    }
+    console.error('Store page did not load properly (no <egs-navigation>). Page title:', await page.title().catch(_ => '?'), 'URL:', page.url());
+    await dumpDiagnostics(page, 'no-navigation');
+    throw e;
+  });
+};
 
-  while (await nav.getAttribute('isloggedin') != 'true') {
+const login = async () => {
+  while (await nav.getAttribute(S.navLoggedInAttr) != 'true') {
     console.error('Not signed in anymore. Please login in the browser or here in the terminal.');
     if (cfg.novnc_port) console.info(`Open http://localhost:${cfg.novnc_port} to login inside the docker container.`);
     if (!cfg.debug) context.setDefaultTimeout(cfg.login_timeout); // give user some extra time to log in
@@ -137,46 +151,44 @@ try {
     const email = cfg.eg_email || await prompt({ message: 'Enter email' });
     if (!email) await notifyBrowserLogin();
     else {
-      // await page.click('text=Sign in with Epic Games');
-      page.waitForSelector('.h_captcha_challenge iframe').then(async () => {
+      $(page, S.login.captcha).waitFor().then(async () => {
         console.error('Got a captcha during login (likely due to too many attempts)! You may solve it in the browser, get a new IP or try again in a few hours.');
         await notify('epic-games: got captcha during login. Please check.');
       }).catch(_ => { });
-      page.waitForSelector('p:has-text("Incorrect response.")').then(async () => {
-        console.error('Incorrect response for captcha!');
-      }).catch(_ => { });
-      await page.fill('#email', email);
-      // Two-step login: click Continue after email, wait for password field. Epic switched between one and two steps several times, so match both the id and a generic submit button.
-      const submitBtn = page.locator('button#continue, button[type="submit"]').first();
+      $(page, S.login.captchaIncorrect).waitFor().then(() => console.error('Incorrect response for captcha!')).catch(_ => { });
+      await $(page, S.login.email).first().fill(email);
+      // Two-step login: click Continue after email, wait for password field. Epic switched between one and two steps several times, so the selectors match both.
+      const submitBtn = $(page, S.login.continue).first();
       await submitBtn.waitFor({ state: 'visible' });
       await submitBtn.click({ delay: 111 });
       const password = email && (cfg.eg_password || await prompt({ type: 'password', message: 'Enter password' }));
       if (!password) await notifyBrowserLogin();
       else {
-        await page.waitForSelector('#password', { state: 'visible' }).catch(_ => { });
-        await page.fill('#password', password);
-        const signInBtn = page.locator('button#sign-in, button[type="submit"]').first();
+        const pw = $(page, S.login.password).first();
+        await pw.waitFor({ state: 'visible' }).catch(_ => { });
+        await pw.fill(password);
+        const signInBtn = $(page, S.login.signIn).first();
         await signInBtn.waitFor({ state: 'visible' });
         await signInBtn.click({ delay: 111 });
       }
-      const error = page.locator('#form-error-message');
+      const error = $(page, S.login.error).first();
       error.waitFor().then(async () => {
         console.error('Login error:', await error.innerText());
         console.log('Please login in the browser!');
       }).catch(_ => { });
       // Handle "Is this the right account?" confirmation prompt (PR #583)
-      page.waitForSelector('button#yes, button[aria-label="Yes, continue"]', { timeout: 30000 }).then(async btn => {
+      $(page, S.login.confirmAccount).first().waitFor({ timeout: 30000 }).then(async () => {
         console.log('Got "Is this the right account?" prompt, clicking Yes...');
-        await btn.click({ delay: 111 });
+        await $(page, S.login.confirmAccount).first().click({ delay: 111 });
       }).catch(_ => { });
       // handle MFA, but don't await it
-      page.waitForURL('**/id/login/mfa**').then(async () => {
+      page.waitForURL(S.login.mfaUrl).then(async () => {
         console.log('Enter the security code to continue - This appears to be a new device, browser or location. A security code has been sent to your email address at ...');
         // TODO locator for text (email or app?)
         const otp = cfg.eg_otpkey && authenticator.generate(cfg.eg_otpkey) || await prompt({ type: 'text', message: 'Enter two-factor sign in code', validate: n => n.toString().length == 6 || 'The code must be 6 digits!' }); // can't use type: 'number' since it strips away leading zeros and codes sometimes have them
-        await page.locator('input[name="code-input-0"]').pressSequentially(otp.toString());
+        await $(page, S.login.mfaCode).first().pressSequentially(otp.toString());
         await page.waitForTimeout(500);
-        const otpBtn = page.locator('button[type="submit"]');
+        const otpBtn = $(page, S.login.mfaSubmit).first();
         await otpBtn.waitFor({ state: 'visible' });
         await otpBtn.click({ delay: 111 });
       }).catch(_ => { });
@@ -185,30 +197,28 @@ try {
     if (!cfg.debug) context.setDefaultTimeout(cfg.timeout);
     await waitForNav();
   }
-  user = await nav.getAttribute('displayname'); // 'null' if !isloggedin
-  console.log(`Signed in as ${user}`);
-  db.data[user] ||= {};
-  if (cfg.time) console.timeEnd('login');
-  if (cfg.time) console.time('claim all games');
+};
 
-  // Detect free games via Epic's JSON. The old approach of scraping `a:has(span:text-is("Free Now"))` broke every time Epic redesigned the page (and gave 404s for a while), so it's only a fallback now.
-  let urls = [];
+// Detect free games via Epic's JSON. The old approach of scraping `a:has(span:text-is("Free Now"))` broke every time Epic redesigned the page (and gave 404s for a while), so it's only a fallback now.
+const detectFreeGames = async () => {
+  let games = [];
   try {
-    urls = await getGameUrls(page);
-    console.log('Found free games via JSON:', urls);
+    games = await getFreeGames(page);
+    console.log('Found free games via JSON:', games.map(g => g.url));
   } catch (e) {
     console.error('Failed to fetch free games from JSON:', e.message);
   }
-  if (!urls.length) {
+  if (!games.length) {
     console.log('JSON did not return any free games, trying HTML selector on the free-games page...');
     if (!page.url().startsWith(URL_CLAIM)) await page.goto(URL_CLAIM, { waitUntil: 'domcontentloaded' });
-    const game_loc = page.locator('a:has(span:text-is("Free Now"))');
+    const game_loc = $(page, S.freeNowLinks);
     await game_loc.last().waitFor({ timeout: 10000 }).catch(_ => { });
     const hrefs = await Promise.all((await game_loc.all()).map(a => a.getAttribute('href')));
-    urls = [...new Set(hrefs.filter(Boolean).map(s => s.startsWith('http') ? s : URL_STORE + s))];
+    const urls = [...new Set(hrefs.filter(Boolean).map(s => s.startsWith('http') ? s : URL_STORE + s))];
+    games = urls.map(url => ({ url }));
     console.log('Found free games via HTML selector:', urls);
   }
-  if (!urls.length) console.error('Seems like currently there are no free games available in your region...'); // see https://github.com/vogler/free-games-claimer/issues/210#issuecomment-1727420943
+  if (!games.length) console.error('Seems like currently there are no free games available in your region...'); // see https://github.com/vogler/free-games-claimer/issues/210#issuecomment-1727420943
 
   // Free mobile games (Android/iOS), https://github.com/vogler/free-games-claimer/issues/474 - opt-in via EG_MOBILE=1
   if (cfg.eg_mobile) {
@@ -216,87 +226,179 @@ try {
     try {
       const mobileGames = await getMobileGames(context);
       console.log('Free mobile games:', mobileGames);
-      urls.push(...mobileGames.map(x => x.url).filter(u => !urls.includes(u)));
+      games.push(...mobileGames.filter(m => !games.some(g => g.url == m.url)));
     } catch (e) {
       console.error('Failed to get mobile games:', e.message);
     }
   }
+  return games;
+};
 
-  for (const url of urls) {
-    if (cfg.time) console.time('claim game');
-    const game_id = url.split('/').pop();
-    let game = db.data[user][game_id]; // undefined for new game, set below
-    if (game?.status == 'claimed') { // no need to load the page again (and risk a captcha) for a game this user already claimed
-      console.log('Already claimed, skipping:', url);
-      notify_games.push({ title: game.title, url, status: 'existed' });
-      if (cfg.time) console.timeEnd('claim game');
-      continue;
+// The checkout form - either inside the iframe on the product page or the standalone purchase page (direct checkout fallback).
+// Returns the final status: 'claimed', 'skipped', 'unavailable-in-region', 'existed' or 'failed'.
+const checkout = async (scope, game, url) => {
+  const order = $(scope, S.checkout.placeOrder);
+  // skip game if unavailable in region, https://github.com/vogler/free-games-claimer/issues/46 TODO check games for account's region
+  if (await $(scope, S.checkout.regionError).count() > 0) {
+    console.error('  This product is unavailable in your region!');
+    return 'unavailable-in-region';
+  }
+  $(scope, S.checkout.pin).first().waitFor().then(async () => {
+    if (!cfg.eg_parentalpin) {
+      console.error('  EG_PARENTALPIN not set. Need to enter Parental Control PIN manually.');
+      notify('epic-games: EG_PARENTALPIN not set. Need to enter Parental Control PIN manually.');
     }
+    await $(scope, S.checkout.pinInput).first().pressSequentially(cfg.eg_parentalpin);
+    await $(scope, S.checkout.pinContinue).first().click({ delay: 11 });
+  }).catch(_ => { });
+
+  // wait for the order button; on the standalone purchase page an owned game shows a notice instead
+  try {
+    await order.first().waitFor();
+  } catch (e) {
+    if (await $(scope, S.checkout.alreadyOwned).count() > 0) {
+      console.log('  Already in library! Nothing to claim.');
+      return 'existed';
+    }
+    throw e;
+  }
+
+  if (cfg.debug) await page.pause();
+  if (cfg.dryrun) {
+    console.log('  DRYRUN=1 -> Skip order!');
+    return 'skipped';
+  }
+  if (cfg.interactive && !await confirm()) {
+    console.log('  Skipped by user.');
+    return 'skipped';
+  }
+
+  // Playwright clicked before button was ready to handle event, https://github.com/vogler/free-games-claimer/issues/84#issuecomment-1474346591
+  // Button was renamed from "Place Order" to "Add to library" in 2025, selectors match both.
+  await order.first().click({ delay: 11 });
+
+  // I Agree button is only shown for EU accounts! https://github.com/vogler/free-games-claimer/pull/7#issuecomment-1038964872
+  const btnAgree = $(scope, S.checkout.accept).first();
+  btnAgree.waitFor().then(() => btnAgree.click()).catch(_ => { }); // EU: wait for and click 'I Agree'
+  $(scope, S.checkout.captcha).first().waitFor().then(async () => { // don't await, since element may not be shown
+    console.error('  Got hcaptcha challenge! Lost trust due to too many login attempts? You can solve the captcha in the browser or get a new IP address.');
+    await notify(`epic-games: got captcha challenge for ${game.title ?? url}.\nGame link: ${url}`);
+  }).catch(_ => { }); // may time out if not shown
+  $(scope, S.checkout.captchaFailed).first().waitFor().then(async () => {
+    console.error('  Failed to challenge captcha, please try again later.');
+    await notify('epic-games: failed to challenge captcha. Please check.');
+  }).catch(_ => { });
+  // Success text changed several times: "Thanks for your order!" -> "It's all yours" -> "Download the Epic Games Launcher to play" -> "Is Epic Games Launcher installed?"
+  // The confirmation may be rendered in the checkout frame or in the surrounding page, so look in both.
+  await Promise.any([$(page, S.checkout.success), ...scope === page ? [] : [$(scope, S.checkout.success)]].map(l => l.first().waitFor({ state: 'attached' })));
+  console.log('  Claimed successfully!');
+  return 'claimed';
+};
+
+// Record the outcome of a checkout in the db entry and the notification. 'existed' never overwrites 'claimed'/'failed' (a failed game that is now in the library was claimed manually).
+const applyStatus = (game, notify_game, status) => {
+  notify_game.status = status;
+  if (status == 'existed') {
+    game.status ??= 'existed';
+    if (game.status.startsWith('failed')) game.status = 'manual';
+  } else {
+    game.status = status;
+    if (status == 'claimed') game.time = datetime(); // claimed time overwrites failed/dryrun time
+  }
+};
+
+// Claim one game. Never throws for a single broken game (except Cloudflare blocks), so the other games are still processed.
+const claimGame = async (gameInfo, games) => {
+  const { url } = gameInfo;
+  const game_id = url.split('/').pop();
+  let game = db.data[user][game_id]; // undefined for new game, set below
+  if (game?.status == 'claimed') { // no need to load the page again (and risk a captcha) for a game this user already claimed
+    console.log('Already claimed, skipping:', url);
+    notify_games.push({ title: game.title, url, status: 'existed' });
+    return;
+  }
+  const notify_game = { title: gameInfo.title ?? game_id, url, status: 'failed' };
+  notify_games.push(notify_game); // status is updated below
+  const existedInDb = Boolean(game);
+  try {
     await withRetry(`goto ${url}`, () => page.goto(url), { retries: 3, delayMs: 15000 });
-    if (await isCloudflareChallenge(page)) throw new Error(`Blocked by Cloudflare challenge on ${url}`);
-    // when loading, the button text is empty or 'Loading' -> need to wait for some text {'get', 'in library', 'requires base game'} -> just wait for e or i to not be too specific - https://github.com/vogler/free-games-claimer/issues/375
-    // was using locator('...').filter({ hasText }).waitFor(), but that led to `locator.waitFor: Error: Can't query n-th element` - https://github.com/vogler/free-games-claimer/commit/5938bf4
-    await page.waitForFunction(() => {
-      // eslint-disable-next-line no-undef
-      const btn = document.querySelector('button[data-testid="purchase-cta-button"]');
-      return btn && (/[ei]/i).test(btn.textContent) && !(/loading/i).test(btn.textContent);
-    });
-    const purchaseBtn = page.locator('button[data-testid="purchase-cta-button"]').first();
-    const btnText = (await purchaseBtn.innerText()).toLowerCase().trim(); // barrier to block until page is loaded
+    if (await isCloudflareChallenge(page)) throw new CloudflareError(`Blocked by Cloudflare challenge on ${url}`);
+
+    // when loading, the button text is empty or 'Loading' -> need to wait for some text {'get', 'in library', 'requires base game'} -> wait for e or i to not be too specific - https://github.com/vogler/free-games-claimer/issues/375
+    const purchaseBtn = $(page, S.product.cta).first();
+    const ctaReady = async () => {
+      const t = (await purchaseBtn.innerText({ timeout: 1000 }).catch(_ => '')).trim();
+      return (/[ei]/i).test(t) && !new RegExp(S.product.ctaLoading, 'i').test(t);
+    };
+    let btnText = null;
+    const deadline = Date.now() + cfg.timeout;
+    while (Date.now() < deadline) {
+      if (await ctaReady()) {
+        btnText = (await purchaseBtn.innerText()).toLowerCase().trim(); break;
+      }
+      await page.waitForTimeout(250);
+    }
+
+    let title = gameInfo.title;
+    if (btnText === null) {
+      // Product page changed (or didn't load). Fallback: Epic's standalone checkout URL built from the offer's namespace + id, which doesn't depend on the product page's markup at all.
+      console.error('  Could not find the purchase button on the product page.');
+      await dumpDiagnostics(page, `${game_id}_no-cta`);
+      if (!gameInfo.namespace || !gameInfo.id) throw new Error('Purchase button not found and no offer id for direct checkout');
+      const purchaseUrl = S.purchaseUrl.replace('{namespace}', gameInfo.namespace).replace('{id}', gameInfo.id);
+      console.log('  Trying direct checkout:', purchaseUrl);
+      await page.goto(purchaseUrl);
+      game = db.data[user][game_id] ??= { title, time: datetime(), url };
+      console.log('Current free game:', chalk.blue(title));
+      applyStatus(game, notify_game, await checkout(page, gameInfo, url));
+      return;
+    }
 
     // click Continue if 'This game contains mature content recommended only for ages 18+'
-    if (await page.locator('button:has-text("Continue")').count() > 0) {
+    if (await $(page, S.product.matureContinue).count() > 0) {
       console.log('  This game contains mature content recommended only for ages 18+');
-      if (await page.locator('[data-testid="AgeSelect"]').count()) {
+      if (await $(page, S.product.ageSelect).count()) {
         console.error('  Got "To continue, please provide your date of birth" - This shouldn\'t happen due to cookie set above. Please report to https://github.com/vogler/free-games-claimer/issues/275');
-        await page.locator('#month_toggle').click();
-        await page.locator('#month_menu li:has-text("01")').click();
-        await page.locator('#day_toggle').click();
-        await page.locator('#day_menu li:has-text("01")').click();
-        await page.locator('#year_toggle').click();
-        await page.locator('#year_menu li:has-text("1987")').click();
+        await page.locator(S.product.ageMonth).click();
+        await page.locator(S.product.ageMonthItem).click();
+        await page.locator(S.product.ageDay).click();
+        await page.locator(S.product.ageDayItem).click();
+        await page.locator(S.product.ageYear).click();
+        await page.locator(S.product.ageYearItem).click();
       }
-      await page.click('button:has-text("Continue")', { delay: 111 });
+      await $(page, S.product.matureContinue).first().click({ delay: 111 });
       await page.waitForTimeout(2000);
     }
 
-    let title;
     let bundle_includes;
-    if (await page.locator('span:text-is("About Bundle")').count()) {
-      title = (await page.locator('span:has-text("Buy"):left-of([data-testid="purchase-cta-button"])').first().innerText()).replace('Buy ', '');
+    if (await $(page, S.product.bundleMarker).count()) {
+      title = (await $(page, S.product.bundleTitle).first().innerText().catch(_ => title ?? '')).replace('Buy ', '') || title;
       // h1 first didn't exist for bundles but now it does... However h1 would e.g. be 'Fallout® Classic Collection' instead of 'Fallout Classic Collection'
-      try {
-        bundle_includes = await Promise.all((await page.locator('.product-card-top-row h5').all()).map(b => b.innerText()));
-      } catch (e) {
-        console.error('Failed to get "Bundle Includes":', e);
-      }
+      bundle_includes = await Promise.all((await $(page, S.product.bundleIncludes).all()).map(b => b.innerText())).catch(e => console.error('Failed to get "Bundle Includes":', e.message));
     } else {
-      title = await page.locator('h1').first().innerText();
+      title = await $(page, S.product.title).first().innerText({ timeout: 5000 }).catch(_ => title) || title || game_id;
     }
-    const existedInDb = Boolean(game);
     game = db.data[user][game_id] ??= { title, time: datetime(), url: page.url() }; // this will be set on the initial run only!
+    notify_game.title = title;
     console.log('Current free game:', chalk.blue(title));
     if (bundle_includes) console.log('  This bundle includes:', bundle_includes);
-    const notify_game = { title, url, status: 'failed' };
-    notify_games.push(notify_game); // status is updated below
 
-    if (btnText == 'in library') {
+    if (btnText == S.product.ctaInLibrary) {
       console.log('  Already in library! Nothing to claim.');
       if (!existedInDb) await notify(`Game already in library: ${url}`);
       notify_game.status = 'existed';
       game.status ??= 'existed'; // does not overwrite claimed or failed
       if (game.status.startsWith('failed')) game.status = 'manual'; // was failed but now it's claimed
-    } else if (btnText == 'requires base game') {
+    } else if (btnText == S.product.ctaRequiresBaseGame) {
       console.log('  Requires base game! Nothing to claim.');
       notify_game.status = 'requires base game';
       game.status ??= 'failed:requires-base-game';
-      // TODO claim base game if it is free
-      const baseHref = await page.locator('a:has-text("Overview")').first().getAttribute('href').catch(_ => null);
-      if (baseHref && !urls.includes(URL_STORE + baseHref)) {
-        const baseUrl = URL_STORE + baseHref;
+      const baseHref = await $(page, S.product.baseGameLink).first().getAttribute('href').catch(_ => null);
+      const baseUrl = baseHref && (baseHref.startsWith('http') ? baseHref : URL_STORE + baseHref);
+      if (baseUrl && !games.some(g => g.url == baseUrl)) {
         console.log('  Base game:', baseUrl);
-        urls.push(baseUrl); // add base game to the list of games to claim
-        urls.push(url); // add add-on itself again (once, after the base game)
+        games.push({ url: baseUrl }); // add base game to the list of games to claim
+        games.push(gameInfo); // add add-on itself again (once, after the base game)
       } else {
         console.error('  Could not find the base game or it was already processed. Please claim the base game manually.');
       }
@@ -305,114 +407,69 @@ try {
       await purchaseBtn.click({ delay: 11 }); // got stuck here without delay (or mouse move), see #75, 1ms was also enough
 
       // click Continue if 'Device not supported. This product is not compatible with your current device.' - avoided by Windows userAgent?
-      page.click('button:has-text("Continue")').catch(_ => { }); // needed since change from Chromium to Firefox?
-
+      $(page, S.product.deviceContinue).first().click().catch(_ => { });
       // click 'Yes, buy now' if 'This edition contains something you already have. Still interested?'
-      page.click('button:has-text("Yes, buy now")').catch(_ => { });
-
+      $(page, S.product.buyAnyway).first().click().catch(_ => { });
       // Accept End User License Agreement (only needed once)
-      page.locator(':has-text("end user license agreement")').waitFor().then(async () => {
+      $(page, S.product.eulaText).first().waitFor().then(async () => {
         console.log('  Accept End User License Agreement (only needed once)');
-        console.log(await page.innerHTML('body'));
-        console.log('Please report the HTML above here: https://github.com/vogler/free-games-claimer/issues/371');
-        await page.locator('input#agree').check(); // TODO Bundle: got stuck here; likely unrelated to bundle and locator just changed: https://github.com/vogler/free-games-claimer/issues/371
-        await page.locator('button:has-text("Accept")').click();
+        await $(page, S.product.eulaAgree).first().check();
+        await $(page, S.product.eulaAccept).first().click();
       }).catch(_ => { });
 
       // it then creates an iframe for the purchase
-      await page.waitForSelector('#webPurchaseContainer iframe'); // TODO needed?
-      const iframe = page.frameLocator('#webPurchaseContainer iframe');
-      // skip game if unavailable in region, https://github.com/vogler/free-games-claimer/issues/46 TODO check games for account's region
-      if (await iframe.locator(':has-text("unavailable in your region")').count() > 0) {
-        console.error('  This product is unavailable in your region!');
-        game.status = notify_game.status = 'unavailable-in-region';
-        if (cfg.time) console.timeEnd('claim game');
-        continue;
-      }
-
-      iframe.locator('.payment-pin-code').waitFor().then(async () => {
-        if (!cfg.eg_parentalpin) {
-          console.error('  EG_PARENTALPIN not set. Need to enter Parental Control PIN manually.');
-          notify('epic-games: EG_PARENTALPIN not set. Need to enter Parental Control PIN manually.');
-        }
-        await iframe.locator('input.payment-pin-code__input').first().pressSequentially(cfg.eg_parentalpin);
-        await iframe.locator('button:has-text("Continue")').click({ delay: 11 });
-      }).catch(_ => { });
-
-      if (cfg.debug) await page.pause();
-      if (cfg.dryrun) {
-        console.log('  DRYRUN=1 -> Skip order!');
-        notify_game.status = 'skipped';
-        if (cfg.time) console.timeEnd('claim game');
-        continue;
-      }
-
-      if (cfg.interactive && !await confirm()) {
-        console.log('  Skipped by user.');
-        notify_game.status = 'skipped';
-        if (cfg.time) console.timeEnd('claim game');
-        continue;
-      }
-
-      // Playwright clicked before button was ready to handle event, https://github.com/vogler/free-games-claimer/issues/84#issuecomment-1474346591
-      // Button was renamed from "Place Order" to "Add to library" in 2025, match both.
-      await iframe.locator('button:text-matches("Add to library|Place Order", "i"):not(:has(.payment-loading--loading))').click({ delay: 11 });
-
-      // I Agree button is only shown for EU accounts! https://github.com/vogler/free-games-claimer/pull/7#issuecomment-1038964872
-      const btnAgree = iframe.locator('button:has-text("I Accept")');
-      btnAgree.waitFor().then(() => btnAgree.click()).catch(_ => { }); // EU: wait for and click 'I Agree'
-      try {
-        // context.setDefaultTimeout(100 * 1000); // give time to solve captcha, iframe goes blank after 60s?
-        const captcha = iframe.locator('#h_captcha_challenge_checkout_free_prod iframe');
-        captcha.waitFor().then(async () => { // don't await, since element may not be shown
-          // console.info('  Got hcaptcha challenge! NopeCHA extension will likely solve it.')
-          console.error('  Got hcaptcha challenge! Lost trust due to too many login attempts? You can solve the captcha in the browser or get a new IP address.');
-          // await notify(`epic-games: got captcha challenge right before claim of <a href="${url}">${title}</a>. Use VNC to solve it manually.`); // TODO not all apprise services understand HTML: https://github.com/vogler/free-games-claimer/pull/417
-          await notify(`epic-games: got captcha challenge for.\nGame link: ${url}`);
-          // TODO could even create purchase URL, see https://github.com/vogler/free-games-claimer/pull/130
-          // await page.waitForTimeout(2000);
-          // const p = path.resolve(cfg.dir.screenshots, 'epic-games', 'captcha', `${filenamify(datetime())}.png`);
-          // await captcha.screenshot({ path: p });
-          // console.info('  Saved a screenshot of hcaptcha challenge to', p);
-          // console.error('  Got hcaptcha challenge. To avoid it, get a link from https://www.hcaptcha.com/accessibility'); // TODO save this link in config and visit it daily to set accessibility cookie to avoid captcha challenge?
-        }).catch(_ => { }); // may time out if not shown
-        iframe.locator('.payment__errors:has-text("Failed to challenge captcha, please try again later.")').waitFor().then(async () => {
-          console.error('  Failed to challenge captcha, please try again later.');
-          await notify('epic-games: failed to challenge captcha. Please check.');
-        }).catch(_ => { });
-        // Success text changed several times: "Thanks for your order!" -> "It's all yours" -> "Download the Epic Games Launcher to play" -> "Is Epic Games Launcher installed?"
-        await Promise.any([
-          'Thanks for your order!',
-          'It\'s all yours',
-          'Download the Epic Games Launcher to play',
-          'Is Epic Games Launcher installed?',
-        ].map(t => page.locator(`text=${t}`).waitFor({ state: 'attached' })));
-        game.status = 'claimed';
-        game.time = datetime(); // claimed time overwrites failed/dryrun time
-        console.log('  Claimed successfully!');
-        // context.setDefaultTimeout(cfg.timeout);
-      } catch (e) {
-        console.log(e);
-        // console.error('  Failed to claim! Try again if NopeCHA timed out. Click the extension to see if you ran out of credits (refill after 24h). To avoid captchas try to get a new IP or set a cookie from https://www.hcaptcha.com/accessibility');
-        console.error('  Failed to claim! To avoid captchas try to get a new IP address.');
-        const p = screenshot('failed', `${game_id}_${filenamify(datetime())}.png`);
-        await page.screenshot({ path: p, fullPage: true });
-        game.status = 'failed';
-      }
-      notify_game.status = game.status; // claimed or failed
-
-      const p = screenshot(`${game_id}.png`);
-      if (!existsSync(p)) await page.screenshot({ path: p, fullPage: false }); // fullPage is quite long...
+      await $(page, S.checkout.iframe).first().waitFor();
+      const scope = page.frameLocator([].concat(S.checkout.iframe).join(', ')); // FrameLocator has no .or(), but a CSS selector list works
+      applyStatus(game, notify_game, await checkout(scope, gameInfo, url));
     }
+  } catch (e) {
+    if (e instanceof CloudflareError) throw e; // the other games will be blocked as well
+    console.error(`  Failed to claim ${url}:`, e.message?.split('\n')[0]);
+    console.error('  Failed to claim! To avoid captchas try to get a new IP address.');
+    await dumpDiagnostics(page, `${game_id}_failed`);
+    game = db.data[user][game_id] ??= { title: notify_game.title, time: datetime(), url };
+    game.status = notify_game.status = 'failed';
+  } finally {
+    const p = screenshot(`${game_id}.png`);
+    if (p && !existsSync(p) && notify_game.status != 'failed') await page.screenshot({ path: p, fullPage: false }).catch(_ => { }); // fullPage is quite long...
+  }
+};
+
+try {
+  await context.addCookies([
+    { name: 'OptanonAlertBoxClosed', value: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), domain: '.epicgames.com', path: '/' }, // Accept cookies to get rid of banner to save space on screen. Set accept time to 5 days ago.
+    { name: 'HasAcceptedAgeGates', value: 'USK:9007199254740991,general:18,EPIC SUGGESTED RATING:18', domain: 'store.epicgames.com', path: '/' }, // gets rid of 'To continue, please provide your date of birth', https://github.com/vogler/free-games-claimer/issues/275, USK number doesn't seem to matter, cookie from 'Fallout 3: Game of the Year Edition'
+  ]);
+
+  await page.goto(URL_CLAIM, { waitUntil: 'domcontentloaded' }); // 'domcontentloaded' faster than default 'load' https://playwright.dev/docs/api/class-page#page-goto
+
+  if (cfg.time) console.timeEnd('startup');
+  if (cfg.time) console.time('login');
+
+  // page.click('button:has-text("Accept All Cookies")').catch(_ => { }); // Not needed anymore since we set the cookie above. Clicking this did not always work since the message was animated in too slowly.
+  $(page, S.privacyContinue).first().click({ timeout: 5000 }).catch(_ => { }); // already logged in, but need to accept updated "Epic Games Privacy Policy" - short timeout so this doesn't click a Continue button on the login page later
+
+  await waitForNav();
+  await login();
+  user = await nav.getAttribute(S.navUserAttr); // 'null' if !isloggedin
+  console.log(`Signed in as ${user}`);
+  db.data[user] ||= {};
+  if (cfg.time) console.timeEnd('login');
+  if (cfg.time) console.time('claim all games');
+
+  const games = await detectFreeGames();
+  for (const gameInfo of games) { // games may grow while iterating (base game of an add-on)
+    if (cfg.time) console.time('claim game');
+    await claimGame(gameInfo, games);
     if (cfg.time) console.timeEnd('claim game');
   }
-  if (cfg.time) console.timeEnd('claim all games');
 } catch (error) {
   process.exitCode ||= 1;
   console.error('--- Exception:');
   console.error(error); // .toString()?
   if (error.message && process.exitCode != 130) notify(`epic-games failed: ${error.message.split('\n')[0]}`);
 } finally {
+  if (cfg.time) console.timeEnd('claim all games');
   await db.write(); // write out json db
   writeLastRun('epic-games');
   if (notify_games.filter(g => g.status == 'claimed' || g.status == 'failed').length) { // don't notify if all have status 'existed', 'manual', 'requires base game', 'unavailable-in-region', 'skipped'
